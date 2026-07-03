@@ -1,0 +1,66 @@
+{
+  "_comment": "Illustrative normalized TripRequest for the raw input in xiaohongshu_beijing_sample.md. This is what an agent driving this skill should produce after running extract_places_from_text() and then classifying places against the user's stated goals (first-time visitor, relaxed pace, photo spots, no shopping, skip viral spots that require long queues). It is not auto-loadable as-is - build a TripRequest in Python and construct Place objects from it (see examples/run_example.py).",
+
+  "destination": "Beijing",
+  "start_date": "2026-10-01",
+  "number_of_days": 4,
+  "hotel": "王府井酒店",
+  "daily_start_time": "09:00",
+  "daily_end_time": "21:00",
+  "transport_mode": "mixed",
+
+  "user_goals": [
+    "first time in Beijing, wants classic attractions",
+    "wants relaxed trip",
+    "wants photo spots",
+    "does not like shopping",
+    "willing to skip viral restaurants if they waste too much time"
+  ],
+  "preferences": ["photo_spots", "classic_landmarks"],
+  "hard_constraints": [],
+  "soft_constraints": ["avoid_shopping_districts", "avoid_long_queues"],
+
+  "must_visit_places": [
+    {"name": "故宫", "name_en": "Forbidden City", "category": "museum",
+     "notes": ["reservation_required", "morning_only"], "reservation_required": true},
+    {"name": "颐和园", "name_en": "Summer Palace", "category": "park"}
+  ],
+  "high_priority_places": [
+    {"name": "天安门广场", "name_en": "Tiananmen Square", "category": "landmark"},
+    {"name": "景山公园", "name_en": "Jingshan Park", "category": "landmark",
+     "notes": ["sunset", "best photo of Forbidden City skyline"]},
+    {"name": "北海公园", "name_en": "Beihai Park", "category": "park"},
+    {"name": "天坛", "name_en": "Temple of Heaven", "category": "temple",
+     "notes": ["closed_mondays"]}
+  ],
+  "optional_places": [
+    {"name": "南锣鼓巷", "name_en": "Nanluoguxiang", "category": "old_street",
+     "notes": ["long_queue", "morning_only"]},
+    {"name": "后海", "name_en": "Houhai", "category": "old_street"},
+    {"name": "798艺术区", "name_en": "798 Art District", "category": "old_street"}
+  ],
+  "rejectable_at_intake": [
+    {"name": "慕田峪长城", "name_en": "Mutianyu Great Wall", "category": "landmark",
+     "notes": ["far_from_center"],
+     "reason": "user said trip is relaxed / only 4 days - a Great Wall day trip would consume an entire day and conflicts with 'not too rushed'; flagged for user confirmation rather than auto-included"}
+  ],
+
+  "must_eat_places": [
+    {"name": "四季民福烤鸭店(故宫店)", "category": "restaurant",
+     "notes": ["must_try", "reservation_required"], "reservation_required": true}
+  ],
+  "candidate_restaurants": [
+    {"name": "文宇奶酪店", "category": "cafe", "notes": ["must_try"]},
+    {"name": "烤肉季(什刹海店)", "category": "restaurant"},
+    {"name": "颐和园附近餐厅", "category": "restaurant"}
+  ],
+  "backup_restaurants": [
+    {"name": "烤肉季(什刹海店)", "category": "restaurant"}
+  ],
+
+  "user_overrides": {
+    "南锣鼓巷": {
+      "notes": "user is fine skipping this if the queue looks long - matches 'willing to skip viral restaurants/spots if they waste too much time'"
+    }
+  }
+}
