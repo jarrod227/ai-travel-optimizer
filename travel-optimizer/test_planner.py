@@ -250,6 +250,152 @@ def test_ambiguous_duplicated_names_merged():
 
 
 # --------------------------------------------------------------------------
+# Time-hint tags participate in scheduling
+# --------------------------------------------------------------------------
+
+def test_morning_only_first_and_sunset_last():
+    provider = MockProvider()
+    sunset_spot = make_attraction("Sunset Deck", 39.916, 116.397, duration=60)
+    sunset_spot.tags.add("sunset")
+    morning_spot = make_attraction("Morning Alley", 39.918, 116.399, duration=60)
+    morning_spot.tags.add("morning_only")
+    middle_spot = make_attraction("Middle Spot", 39.917, 116.398, duration=60)
+
+    trip = TripRequest(destination="Beijing", transport_mode=TransportMode.DRIVING)
+    day_plan, _ = build_day_route(
+        0, WEDNESDAY, [sunset_spot, morning_spot, middle_spot], [], trip, provider, "balanced",
+    )
+
+    names = [s.place.name for s in day_plan.stops if not s.is_meal]
+    assert names[0] == "Morning Alley"
+    assert names[-1] == "Sunset Deck"
+    # Sunset spot still lands before 15:30 on this light day, so the planner
+    # should warn instead of silently claiming the hint was honored.
+    assert any("sunset" in r.lower() for r in day_plan.reminders)
+
+
+def test_avoid_weekend_reminder_on_saturday():
+    provider = MockProvider()
+    place = make_attraction("Crowded Street", 39.916, 116.397, duration=60)
+    place.tags.add("avoid_weekend")
+    trip = TripRequest(destination="Beijing", transport_mode=TransportMode.DRIVING)
+
+    saturday = dt.date(2024, 1, 6)
+    day_plan, _ = build_day_route(0, saturday, [place], [], trip, provider, "balanced")
+    assert any("avoid weekends" in r for r in day_plan.reminders)
+
+    day_plan_wed, _ = build_day_route(0, WEDNESDAY, [place], [], trip, provider, "balanced")
+    assert not any("avoid weekends" in r for r in day_plan_wed.reminders)
+
+
+# --------------------------------------------------------------------------
+# Weather reminder for outdoor days
+# --------------------------------------------------------------------------
+
+class RainyMockProvider(MockProvider):
+    def weather(self, city, date=None):
+        return {"city": city, "date": date, "forecast": "light rain", "source": "mock"}
+
+
+def test_rainy_forecast_adds_reminder_for_outdoor_day():
+    park = make_attraction("Big Park", 39.916, 116.397, category=PlaceCategory.PARK, duration=120)
+    trip = TripRequest(destination="Beijing", transport_mode=TransportMode.DRIVING)
+
+    rainy_plan, _ = build_day_route(0, WEDNESDAY, [park], [], trip, RainyMockProvider(), "balanced")
+    assert any("rain" in r.lower() for r in rainy_plan.reminders)
+
+    sunny_plan, _ = build_day_route(0, WEDNESDAY, [park], [], trip, MockProvider(), "balanced")
+    assert not any("rain" in r.lower() for r in sunny_plan.reminders)
+
+
+# --------------------------------------------------------------------------
+# Stretched day (forced cluster merge) raises a reminder
+# --------------------------------------------------------------------------
+
+def test_stretched_day_reminder():
+    provider = MockProvider()
+    near = make_attraction("Central Spot", 39.916, 116.397, priority=PriorityLevel.MUST_VISIT, duration=90)
+    far = make_attraction("Great Wall-ish", 40.43, 116.57, priority=PriorityLevel.MUST_VISIT, duration=90)
+    trip = TripRequest(destination="Beijing", transport_mode=TransportMode.DRIVING)
+
+    day_plan, _ = build_day_route(0, WEDNESDAY, [near, far], [], trip, provider, "balanced")
+    assert any("stretched" in r for r in day_plan.reminders)
+
+
+# --------------------------------------------------------------------------
+# Backup restaurant fallback
+# --------------------------------------------------------------------------
+
+def test_backup_restaurant_used_when_candidates_infeasible():
+    provider = MockProvider()
+    attraction = make_attraction("Morning Museum", 39.916, 116.397, duration=180)
+    # Main candidate closes before the lunch window can ever fit a meal.
+    early_closer = make_restaurant("Breakfast Only", 39.917, 116.398, hours=(7, 0, 11, 0))
+    backup = make_restaurant("Reliable Backup", 39.918, 116.399, hours=(11, 0, 21, 0),
+                              priority=PriorityLevel.BACKUP_RESTAURANT)
+
+    trip = TripRequest(destination="Beijing", transport_mode=TransportMode.DRIVING)
+    day_plan, _ = build_day_route(
+        0, WEDNESDAY, [attraction], [early_closer], trip, provider, "balanced",
+        backup_pool=[backup],
+    )
+
+    meal_stops = [s for s in day_plan.stops if s.is_meal]
+    assert any(s.place.name == "Reliable Backup" for s in meal_stops)
+    assert any("backup option" in s.note for s in meal_stops)
+
+
+# --------------------------------------------------------------------------
+# Style differentiation
+# --------------------------------------------------------------------------
+
+def test_relaxed_style_caps_attractions_per_day():
+    provider = MockProvider()
+
+    def fresh_attractions():
+        return [
+            make_attraction(f"Spot{i}", 39.916 + i * 0.002, 116.397 + i * 0.002,
+                             priority=PriorityLevel.OPTIONAL, duration=60)
+            for i in range(6)
+        ]
+
+    trip = TripRequest(destination="Beijing", transport_mode=TransportMode.DRIVING)
+
+    balanced_plan, _ = build_day_route(0, WEDNESDAY, fresh_attractions(), [], trip, provider, "balanced")
+    relaxed_plan, relaxed_rejected = build_day_route(0, WEDNESDAY, fresh_attractions(), [], trip, provider, "relaxed")
+
+    balanced_count = len([s for s in balanced_plan.stops if not s.is_meal])
+    relaxed_count = len([s for s in relaxed_plan.stops if not s.is_meal])
+    assert relaxed_count <= 3 < balanced_count
+    assert any(r.failed_constraint == "relaxed_pace_cap" for r in relaxed_rejected)
+
+
+def test_must_visit_first_anchors_must_visit_early():
+    provider = MockProvider()
+
+    def fresh_attractions():
+        # The must-visit is geographically the farthest from the hotel, so
+        # pure nearest-neighbor ordering would visit it last.
+        must = make_attraction("Anchor Palace", 39.95, 116.43, priority=PriorityLevel.MUST_VISIT, duration=90)
+        near = [
+            make_attraction(f"Near{i}", 39.914 + i * 0.001, 116.411 + i * 0.001,
+                             priority=PriorityLevel.OPTIONAL, duration=60)
+            for i in range(2)
+        ]
+        return [must, *near]
+
+    trip = TripRequest(destination="Beijing", hotel="王府井酒店", transport_mode=TransportMode.DRIVING)
+
+    balanced_plan, _ = build_day_route(0, WEDNESDAY, fresh_attractions(), [], trip, provider, "balanced")
+    anchored_plan, _ = build_day_route(0, WEDNESDAY, fresh_attractions(), [], trip, provider, "must_visit_first")
+
+    balanced_first = next(s.place.name for s in balanced_plan.stops if not s.is_meal)
+    anchored_first = next(s.place.name for s in anchored_plan.stops if not s.is_meal)
+    assert balanced_first != "Anchor Palace"
+    assert anchored_first == "Anchor Palace"
+
+
+# --------------------------------------------------------------------------
 # 10. relaxed plan has more buffer than balanced plan
 # --------------------------------------------------------------------------
 

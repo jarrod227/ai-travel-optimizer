@@ -8,10 +8,10 @@ thousands) and keeps the algorithm easy to read and debug.
 
 Key property that falls out of "always merge the closest pair first": a
 genuinely far outlier (e.g. a Great Wall day trip) naturally stays its own
-cluster/day as long as there are enough days to avoid forcing a merge. If a
-merge becomes unavoidable, the caller (planner.py) is informed via
-``Cluster.max_internal_travel_minutes`` so it can raise a reminder about the
-extra travel time.
+cluster/day as long as there are enough days to avoid forcing a merge. When
+a merge is unavoidable, planner.py detects the resulting stretched day via
+:func:`max_internal_travel_minutes` and raises a reminder about the extra
+travel time.
 """
 
 from __future__ import annotations

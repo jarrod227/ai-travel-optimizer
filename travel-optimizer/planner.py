@@ -27,7 +27,12 @@ from __future__ import annotations
 import datetime as dt
 from typing import Optional
 
-from clustering import Cluster, assign_clusters_to_days, cluster_places_by_travel_time
+from clustering import (
+    Cluster,
+    assign_clusters_to_days,
+    cluster_places_by_travel_time,
+    max_internal_travel_minutes,
+)
 from extract_places import extract_places_from_text, merge_duplicate_places, normalize_place_name
 from models import (
     NEAR_CLOSING_NOTE,
@@ -74,12 +79,29 @@ DINNER_HARD_CUTOFF = dt.time(21, 0)
 DINNER_EARLIEST_FORCED = dt.time(16, 0)
 
 STYLE_PARAMS: dict[str, dict] = {
-    "balanced": {"buffer_ratio": 0.20, "safety_buffer_min": 20},
-    "must_visit_first": {"buffer_ratio": 0.15, "safety_buffer_min": 20},
-    "relaxed": {"buffer_ratio": 0.32, "safety_buffer_min": 30},
+    # max_attractions_per_day=None means "whatever fits the time budget".
+    # anchor_must_visit reorders each day so must-visit places come first
+    # (claim the fresh morning slot) even at some geographic cost.
+    "balanced": {"buffer_ratio": 0.20, "safety_buffer_min": 20,
+                 "max_attractions_per_day": None, "anchor_must_visit": False},
+    "must_visit_first": {"buffer_ratio": 0.15, "safety_buffer_min": 20,
+                          "max_attractions_per_day": None, "anchor_must_visit": True},
+    "relaxed": {"buffer_ratio": 0.32, "safety_buffer_min": 30,
+                "max_attractions_per_day": 3, "anchor_must_visit": False},
 }
 
 MAX_REASONABLE_RESTAURANT_MINUTES = 40.0
+# A day whose worst point-to-point leg exceeds this is "geographically
+# stretched" (usually a forced cluster merge) and gets a reminder.
+STRETCHED_DAY_LEG_MINUTES = 45.0
+OUTDOOR_CATEGORIES = {
+    PlaceCategory.PARK,
+    PlaceCategory.OLD_STREET,
+    PlaceCategory.LANDMARK,
+    PlaceCategory.THEME_PARK,
+    PlaceCategory.OBSERVATION_DECK,
+}
+_RAIN_KEYWORDS = ("雨", "雪", "rain", "snow", "storm", "shower")
 _REFERENCE_MONDAY_FREE_DATE = dt.date(2024, 1, 3)  # a Wednesday, used only as a placeholder
 
 
@@ -482,6 +504,43 @@ def _theme_for(attractions: list[Place], day_index: int) -> str:
     return f"Day {day_index + 1}: {names}"
 
 
+def _apply_time_preference_order(ordered: list[Place]) -> list[Place]:
+    """Stable re-partition honoring extracted time hints: morning_only places
+    move to the front of the day, sunset places to the end, everything else
+    keeps its geographic order in the middle. Crude but predictable - not a
+    full time-window solver."""
+
+    morning = [p for p in ordered if "morning_only" in p.tags]
+    sunset = [p for p in ordered if "sunset" in p.tags and "morning_only" not in p.tags]
+    placed = {id(p) for p in morning} | {id(p) for p in sunset}
+    middle = [p for p in ordered if id(p) not in placed]
+    return morning + middle + sunset
+
+
+def _weather_note(provider: MapProvider, city: str, date: dt.date, places: list[Place]) -> Optional[str]:
+    """One reminder line if the forecast mentions rain/snow and the day has
+    outdoor stops. Weather payload shape is provider-specific (AMap returns
+    its raw forecast list, MockProvider a flat dict), so this deliberately
+    uses a keyword scan over the stringified payload rather than parsing."""
+
+    outdoor = [p.name for p in places if p.category in OUTDOOR_CATEGORIES]
+    if not outdoor:
+        return None
+    try:
+        payload = provider.weather(city, date.isoformat())
+    except Exception:  # noqa: BLE001 - weather is best-effort, never fatal
+        return None
+    if not payload:
+        return None
+    text = str(payload).lower()
+    if any(kw in text for kw in _RAIN_KEYWORDS):
+        return (
+            f"Weather: rain/snow appears in the forecast for {date.isoformat()} - outdoor stops "
+            f"({', '.join(outdoor[:3])}) may be affected; consider swapping with an indoor-focused day."
+        )
+    return None
+
+
 def build_day_route(
     day_index: int,
     date: dt.date,
@@ -490,8 +549,12 @@ def build_day_route(
     trip_request: TripRequest,
     provider: MapProvider,
     style: str,
+    backup_pool: Optional[list[Place]] = None,
+    used_place_names: Optional[set[str]] = None,
 ) -> tuple[DayPlan, list[RejectedPlace]]:
     params = STYLE_PARAMS[style]
+    backup_pool = backup_pool if backup_pool is not None else []
+    used_names = used_place_names if used_place_names is not None else set()
     mode = trip_request.transport_mode
     city = trip_request.destination
 
@@ -508,7 +571,39 @@ def build_day_route(
     trimmed_attractions, rejected = fit_attractions_to_budget(
         attractions, day_span_minutes, params["buffer_ratio"], provider, mode, city, start_coords,
     )
+
+    # Relaxed style: hard-cap stops per day (never dropping must-visit) so a
+    # low-risk plan is genuinely lighter, not just a tighter time budget.
+    cap = params["max_attractions_per_day"]
+    if cap is not None:
+        while len(trimmed_attractions) > cap:
+            droppable = [p for p in trimmed_attractions if p.priority in _DROPPABLE_RANK]
+            if not droppable:
+                break
+            droppable.sort(key=lambda p: (_DROPPABLE_RANK[p.priority], -(p.expected_duration_minutes or 0)))
+            worst = droppable[0]
+            trimmed_attractions.remove(worst)
+            rejected.append(
+                RejectedPlace(
+                    worst,
+                    reason=f"The relaxed plan caps each day at {cap} attractions to keep the pace low-risk.",
+                    failed_constraint="relaxed_pace_cap",
+                    could_fit_another_day=True,
+                    alternative_suggestion="Kept in the balanced / must-visit-first plans if it fits there.",
+                )
+            )
+
     ordered_attractions = _order_stops(start_coords, trimmed_attractions, provider, mode, city)
+
+    # Must-Visit First style: pull must-visit places to the front of the day
+    # (fresh legs, lower crowd risk) even if geography would order otherwise.
+    if params["anchor_must_visit"]:
+        must = [p for p in ordered_attractions if p.priority == PriorityLevel.MUST_VISIT]
+        others = [p for p in ordered_attractions if p.priority != PriorityLevel.MUST_VISIT]
+        ordered_attractions = must + others
+
+    # Time hints from the source notes (小红书 tags) outrank both orderings.
+    ordered_attractions = _apply_time_preference_order(ordered_attractions)
 
     stops: list[ItineraryStop] = []
     reminders: list[str] = []
@@ -522,13 +617,13 @@ def build_day_route(
     # total_travel_minutes stays honest.
     pending_travel_minutes = 0
 
-    def try_insert_meal(window_start: dt.time, hard_cutoff: dt.time, label: str) -> bool:
+    def _attempt_meal_from(pool: list[Place], label: str, is_backup: bool) -> bool:
         nonlocal current_time, current_coords, lunch_done, dinner_done, pending_travel_minutes
-        if _time_to_minutes(current_time) < _time_to_minutes(window_start):
-            return False
-        if _time_to_minutes(current_time) > _time_to_minutes(hard_cutoff):
-            return False
-        for candidate in list(meal_pool):
+        for candidate in list(pool):
+            if not candidate.is_geocoded:
+                continue
+            if is_backup and candidate.name in used_names:
+                continue  # already scheduled elsewhere in this plan
             travel_est = provider.travel_time(current_coords, (candidate.lat, candidate.lng), mode, city)
             arrival = _add_minutes(current_time, travel_est.duration_minutes)
             dining_minutes = candidate.expected_duration_minutes or 75
@@ -536,26 +631,38 @@ def build_day_route(
             if not feasible:
                 continue
             closing = candidate.opening_hours.closing_time_on(date) if candidate.opening_hours else None
-            near_closing = ""
+            note_parts = ["backup option"] if is_backup else []
             if closing is not None:
                 slack = _time_to_minutes(closing) - (_time_to_minutes(arrival) + dining_minutes)
                 if slack < 30:
-                    near_closing = NEAR_CLOSING_NOTE
+                    note_parts.append(NEAR_CLOSING_NOTE)
             departure = _add_minutes(arrival, dining_minutes)
             stops.append(
                 ItineraryStop(candidate, arrival, departure,
                               round(travel_est.duration_minutes) + pending_travel_minutes, mode,
-                              is_meal=True, note=near_closing)
+                              is_meal=True, note="; ".join(note_parts))
             )
             pending_travel_minutes = 0
             current_time, current_coords = departure, (candidate.lat, candidate.lng)
-            meal_pool.remove(candidate)
+            pool.remove(candidate)
+            used_names.add(candidate.name)
             if label == "lunch":
                 lunch_done = True
             else:
                 dinner_done = True
             return True
         return False
+
+    def try_insert_meal(window_start: dt.time, hard_cutoff: dt.time, label: str) -> bool:
+        if _time_to_minutes(current_time) < _time_to_minutes(window_start):
+            return False
+        if _time_to_minutes(current_time) > _time_to_minutes(hard_cutoff):
+            return False
+        # Prefer the day's own candidates; fall back to the shared backup pool
+        # only when none of them fit.
+        return _attempt_meal_from(meal_pool, label, is_backup=False) or _attempt_meal_from(
+            backup_pool, label, is_backup=True
+        )
 
     for place in ordered_attractions:
         # Look ahead: if this attraction is long enough to carry us straight
@@ -601,22 +708,44 @@ def build_day_route(
                 )
                 continue
 
+        # Surface the source-note time hints on the stop itself, or warn when
+        # the schedule couldn't honor them.
+        tag_note = ""
+        if "morning_only" in place.tags:
+            if _time_to_minutes(arrival) <= 12 * 60:
+                tag_note = "morning visit (as the source notes recommend)"
+            else:
+                reminders.append(
+                    f"{place.name} is recommended for mornings but lands at {arrival.strftime('%H:%M')} - "
+                    "consider swapping it earlier in the day."
+                )
+        elif "sunset" in place.tags:
+            if _time_to_minutes(arrival) >= 15 * 60 + 30:
+                tag_note = "timed for sunset views"
+            else:
+                reminders.append(
+                    f"{place.name} is a sunset spot but is scheduled at {arrival.strftime('%H:%M')} - "
+                    "consider moving it to late afternoon."
+                )
+
         duration = place.expected_duration_minutes or 60
         departure = _add_minutes(arrival, duration)
         stops.append(ItineraryStop(place, arrival, departure,
-                                   round(travel_est.duration_minutes) + pending_travel_minutes, mode))
+                                   round(travel_est.duration_minutes) + pending_travel_minutes, mode,
+                                   note=tag_note))
         pending_travel_minutes = 0
+        used_names.add(place.name)
         current_time, current_coords = departure, (place.lat, place.lng)
 
     # Attractions are done. If a meal window hasn't opened yet, idle (free
     # time) until it does rather than declaring the meal infeasible - only
     # worth doing when there are actual candidates left to try.
     if not lunch_done:
-        if meal_pool and _time_to_minutes(current_time) < _time_to_minutes(LUNCH_WINDOW[0]):
+        if (meal_pool or backup_pool) and _time_to_minutes(current_time) < _time_to_minutes(LUNCH_WINDOW[0]):
             current_time = LUNCH_WINDOW[0]
         try_insert_meal(LUNCH_WINDOW[0], LUNCH_HARD_CUTOFF, "lunch")
     if not dinner_done:
-        if meal_pool and _time_to_minutes(current_time) < _time_to_minutes(DINNER_WINDOW[0]):
+        if (meal_pool or backup_pool) and _time_to_minutes(current_time) < _time_to_minutes(DINNER_WINDOW[0]):
             current_time = DINNER_WINDOW[0]
         try_insert_meal(DINNER_WINDOW[0], DINNER_HARD_CUTOFF, "dinner")
 
@@ -635,6 +764,28 @@ def build_day_route(
         reminders.append("No feasible lunch stop found in the target window (11:30-13:30); add a flexible option.")
     if not dinner_done:
         reminders.append("No feasible dinner stop found in the target window (17:30-20:00); add a flexible option.")
+
+    # avoid_weekend tag vs. actual travel date.
+    if date.weekday() >= 5:
+        for place in trimmed_attractions:
+            if "avoid_weekend" in place.tags:
+                reminders.append(
+                    f"{place.name} is flagged 'avoid weekends' in the source notes and this day is a "
+                    f"{date.strftime('%A')} - expect heavy crowds; go at opening time or swap with a weekday."
+                )
+
+    # Flag geographically stretched days (usually the result of a forced
+    # cluster merge when there are more areas than travel days).
+    worst_leg = max_internal_travel_minutes(trimmed_attractions, provider, mode, city)
+    if worst_leg > STRETCHED_DAY_LEG_MINUTES:
+        reminders.append(
+            f"This day's stops are geographically stretched - the worst point-to-point leg is about "
+            f"{worst_leg:.0f} min; consider dropping an outlier or splitting the day."
+        )
+
+    weather_note = _weather_note(provider, city, date, trimmed_attractions)
+    if weather_note:
+        reminders.append(weather_note)
 
     leftover_must_eat = [p for p in meal_pool if p.priority == PriorityLevel.MUST_EAT]
     for place in leftover_must_eat:
@@ -710,11 +861,19 @@ def _build_plan(
     day_restaurant_groups: list[list[Place]],
     day_dates: list[dt.date],
     provider: MapProvider,
+    backup_restaurants: Optional[list[Place]] = None,
 ) -> tuple[Plan, list[RejectedPlace]]:
     days: list[DayPlan] = []
     rejected_total: list[RejectedPlace] = []
+    # Per-plan copies: a backup consumed on Day 1 stays consumed on Day 2 of
+    # the same plan, but each plan style starts from the full pool.
+    backup_pool = list(backup_restaurants or [])
+    used_names: set[str] = set()
     for i, (attractions, restaurants) in enumerate(zip(day_attraction_groups, day_restaurant_groups)):
-        day_plan, rejected = build_day_route(i, day_dates[i], attractions, restaurants, trip_request, provider, style)
+        day_plan, rejected = build_day_route(
+            i, day_dates[i], attractions, restaurants, trip_request, provider, style,
+            backup_pool=backup_pool, used_place_names=used_names,
+        )
         days.append(day_plan)
         rejected_total.extend(rejected)
 
@@ -774,15 +933,15 @@ def plan_trip(raw_input: TripRequest | str, provider: Optional[MapProvider] = No
 
     balanced_plan, balanced_rejected = _build_plan(
         "balanced", "Best Balanced Plan", trip_request, day_attraction_groups, day_restaurant_groups, day_dates,
-        provider,
+        provider, backup_restaurants=backups,
     )
     must_visit_plan, _ = _build_plan(
         "must_visit_first", "Must-Visit First Plan", trip_request, day_attraction_groups, day_restaurant_groups,
-        day_dates, provider,
+        day_dates, provider, backup_restaurants=backups,
     )
     relaxed_plan, _ = _build_plan(
         "relaxed", "Relaxed / Low-Risk Plan", trip_request, day_attraction_groups, day_restaurant_groups, day_dates,
-        provider,
+        provider, backup_restaurants=backups,
     )
 
     all_places = [*attraction_pool, *restaurant_pool, *backups]

@@ -28,8 +28,17 @@ re-implement the logic inline.
 
 ## Workflow
 
+0. **Transcribe screenshots first.** The package only consumes text. When
+   the user provides Xiaohongshu screenshots (or any image), read the image
+   with your own vision capability and transcribe it into a plain-text list
+   before calling any package function: one place per line, keeping the
+   original Chinese names and any comments ("需要预约", "人超多建议早上去",
+   "日落超美") on the same line - those comments are exactly what the tag
+   extractor feeds on. Don't summarize or translate at this stage; lossy
+   transcription here degrades everything downstream.
+
 1. **Extract.** Run `extract_places.extract_places_from_text(raw_text)` on
-   any pasted screenshots/notes. This normalizes names, deduplicates
+   the transcribed/pasted text. This normalizes names, deduplicates
    (including common Chinese/English name pairs via a small alias table),
    and tags notes like `reservation_required`, `morning_only`, `sunset`,
    `closed_mondays`, `long_queue`, `far_from_center`, `must_try`,
@@ -129,6 +138,23 @@ with reasons, places moved to another day and why, reservation reminders,
 low-confidence-metadata places, and backup options. `examples/run_example.py`
 shows a working formatter (`format_result`) you can copy or adapt; its
 output is captured in `examples/sample_output.md`.
+
+**Answer in the user's language.** The package emits all reasons, reminders,
+and explanations in English (so the code stays greppable), but the typical
+user of this skill reads Chinese. When presenting results, translate the
+generated text into whatever language the user is speaking; keep place
+names exactly as the user wrote them (don't translate 南锣鼓巷 into
+"South Luogu Alley" unless the user used English names).
+
+The three plan styles are genuinely different, not just re-scored copies:
+Relaxed caps each day at 3 attractions (and keeps a ~32% buffer),
+Must-Visit First reorders each day so must-visit places claim the morning
+slot, and Balanced maximizes fit within a 20% buffer. Day reminders can
+include: meal-window gaps, reservation risks, "avoid weekends" warnings
+when the travel date is a Saturday/Sunday, rain/snow forecasts affecting
+outdoor stops, source-note time hints that couldn't be honored
+(morning-only / sunset spots landing at the wrong time), and geographically
+stretched days caused by forced cluster merges - relay all of them.
 
 ## Assumptions worth restating to the user
 

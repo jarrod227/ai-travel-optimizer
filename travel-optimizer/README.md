@@ -122,6 +122,31 @@ Must-visit/must-eat places are only ever rejected for a genuine hard
 constraint (closed that day, after last entry, or no way to fit the
 closing-time math anywhere) - every rejection carries a `reason`,
 `failed_constraint`, and `alternative_suggestion` (`models.RejectedPlace`).
+When none of a day's candidate restaurants fit a meal window, the shared
+backup-restaurant pool is tried before declaring the meal infeasible; a
+backup used on one day stays consumed for the rest of that plan.
+
+## Plan styles
+
+The three output plans differ structurally, not just in score:
+
+- **Best Balanced** - maximizes what fits within a ~20% schedule buffer.
+- **Must-Visit First** - reorders each day so must-visit places take the
+  morning slot (fresh legs, lower crowd risk), even at some geographic cost.
+- **Relaxed / Low-Risk** - hard-caps each day at 3 attractions (must-visit
+  places never count against being dropped) and keeps a ~32% buffer.
+
+## Source-note hints and risk reminders
+
+Tags extracted from the source text actively shape the schedule:
+`morning_only` places are moved to the front of their day and `sunset`
+places to the end (with a warning when the timing still can't be honored),
+and `avoid_weekend` places trigger a crowd warning when the travel date is
+a Saturday/Sunday. Each day also gets a reminder when its stops are
+geographically stretched (worst point-to-point leg > 45 min, usually a
+forced cluster merge) and when the provider's weather forecast mentions
+rain/snow on a day with outdoor stops (a keyword heuristic over the raw
+forecast payload - provider shapes differ).
 
 ## Map output
 
