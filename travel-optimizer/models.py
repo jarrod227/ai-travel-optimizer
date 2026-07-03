@@ -62,6 +62,10 @@ class RatingSource(StrEnum):
     UNKNOWN = "unknown"
 
 
+# Marker string shared between planner (writes it into ItineraryStop.note)
+# and scoring (reads it to penalize meals scheduled too close to closing).
+NEAR_CLOSING_NOTE = "arrival is close to closing time"
+
 # Notes/tags extracted from free text (Xiaohongshu-style copy, user remarks).
 NOTE_TAGS = {
     "reservation_required",

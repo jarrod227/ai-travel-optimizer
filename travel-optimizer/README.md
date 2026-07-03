@@ -156,9 +156,10 @@ schedule buffer than balanced ones.
   solver - fine for day-sized stop counts (< ~10), not meant for more.
 - Meals are inserted opportunistically as the day's clock crosses the
   lunch/dinner window; a long attraction that would otherwise swallow the
-  whole window triggers an early "grab food near here first" fallback
-  (see `planner.build_day_route`), but this is still a heuristic, not a
-  full schedule search.
+  whole window triggers an early "grab food near here first" fallback,
+  and if attractions finish before a window opens the planner idles (free
+  time) until it does (see `planner.build_day_route`). This is still a
+  heuristic, not a full schedule search.
 - Without an explicit `start_date`, weekday-based closures use a
   placeholder reference date - pass real dates if that matters.
 - Clustering avoids `numpy`/`scipy`/`sklearn` on purpose (simple, readable,

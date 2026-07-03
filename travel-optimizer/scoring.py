@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from models import DayPlan, Place, Plan, PriorityLevel, ScoreBreakdown, TripRequest
+from models import NEAR_CLOSING_NOTE, DayPlan, Place, Plan, PriorityLevel, ScoreBreakdown, TripRequest
 
 NEUTRAL_RATING = 3.5
 RATING_EQUIVALENCE_BAND = 0.2
@@ -67,7 +67,9 @@ def rating_quality_score(place: Place) -> float:
     count_confidence = 1.0
     if place.rating_count is not None:
         count_confidence = min(1.0, 0.3 + (place.rating_count / 5000.0))
-    return base * min(place.metadata_confidence, count_confidence) + base * 0.0 + base * (1 - min(place.metadata_confidence, count_confidence)) * 0.5
+    confidence = min(place.metadata_confidence, count_confidence)
+    # Low confidence pulls the score halfway toward neutral, never to zero.
+    return base * (0.5 + 0.5 * confidence)
 
 
 def _all_scheduled_places(days: list[DayPlan]) -> list[Place]:
@@ -91,7 +93,7 @@ def _meal_timing_score(days: list[DayPlan]) -> float:
                 continue
             # A meal scheduled with generous room before the venue's closing
             # time (tracked via stop.note, populated by planner) scores higher.
-            scores.append(0.5 if "near closing" in stop.note else 1.0)
+            scores.append(0.5 if NEAR_CLOSING_NOTE in stop.note else 1.0)
     return sum(scores) / len(scores) if scores else 1.0
 
 

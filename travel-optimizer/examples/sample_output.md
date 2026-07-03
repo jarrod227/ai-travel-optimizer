@@ -1,14 +1,14 @@
 # Beijing itinerary options
 
-## Best Balanced Plan (score: 65.7)
+## Best Balanced Plan (score: 63.7)
 
 **Day 1: 故宫 & 景山公园**
 09:12-12:54 故宫
 13:10-14:28 文宇奶酪店 (meal)
 14:40-15:49 景山公园
+17:44-19:10 烤肉季(什刹海店) (meal)
   ⚠ Risk: 故宫 - 故宫 requires a reservation and no confirmed time slot is known. Consider an earlier start or moving it to another day.
-  ⚠ No feasible dinner stop found in the target window (17:30-20:00); add a flexible option.
-  buffer: 41%
+  buffer: 12%
 
 **Day 2: 798艺术区**
 09:48-12:06 798艺术区
@@ -25,17 +25,16 @@
 Why this plan works:
 - Covers 4 attraction stop(s) across 3 day(s).
 - Balances attractions, food, and travel time for an efficient but unhurried trip.
-- Average schedule buffer: 44%.
+- Average schedule buffer: 35%.
 
 Risks / reminders:
 - Risk: 故宫 - 故宫 requires a reservation and no confirmed time slot is known. Consider an earlier start or moving it to another day.
-- No feasible dinner stop found in the target window (17:30-20:00); add a flexible option.
 - No feasible lunch stop found in the target window (11:30-13:30); add a flexible option.
 - No feasible dinner stop found in the target window (17:30-20:00); add a flexible option.
 - No feasible dinner stop found in the target window (17:30-20:00); add a flexible option.
 - 4 place(s) did not fit this plan's schedule (see rejected list).
 
-## Must-Visit First Plan (score: 69.8)
+## Must-Visit First Plan (score: 65.5)
 
 **Day 1: 故宫 & 天坛**
 09:14-10:23 景山公园
@@ -70,15 +69,15 @@ Risks / reminders:
 - No feasible dinner stop found in the target window (17:30-20:00); add a flexible option.
 - 3 place(s) did not fit this plan's schedule (see rejected list).
 
-## Relaxed / Low-Risk Plan (score: 65.7)
+## Relaxed / Low-Risk Plan (score: 63.7)
 
 **Day 1: 故宫 & 景山公园**
 09:12-12:54 故宫
 13:10-14:28 文宇奶酪店 (meal)
 14:40-15:49 景山公园
+17:44-19:10 烤肉季(什刹海店) (meal)
   ⚠ Risk: 故宫 - 故宫 requires a reservation and no confirmed time slot is known. Consider an earlier start or moving it to another day.
-  ⚠ No feasible dinner stop found in the target window (17:30-20:00); add a flexible option.
-  buffer: 41%
+  buffer: 12%
 
 **Day 2: 798艺术区**
 09:48-12:06 798艺术区
@@ -95,11 +94,10 @@ Risks / reminders:
 Why this plan works:
 - Covers 4 attraction stop(s) across 3 day(s).
 - Keeps a larger schedule buffer each day to reduce the risk of delays.
-- Average schedule buffer: 44%.
+- Average schedule buffer: 35%.
 
 Risks / reminders:
 - Risk: 故宫 - 故宫 requires a reservation and no confirmed time slot is known. Consider an earlier start or moving it to another day.
-- No feasible dinner stop found in the target window (17:30-20:00); add a flexible option.
 - No feasible lunch stop found in the target window (11:30-13:30); add a flexible option.
 - No feasible dinner stop found in the target window (17:30-20:00); add a flexible option.
 - No feasible dinner stop found in the target window (17:30-20:00); add a flexible option.

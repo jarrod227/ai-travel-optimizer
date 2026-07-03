@@ -18,9 +18,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from models import Place
+from models import Place, TransportMode
 from providers import MapProvider
-from models import TransportMode
 
 
 def _coords(place: Place) -> tuple[float, float]:

@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import json
 import os
-import time as time_module
 import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
@@ -186,6 +185,9 @@ _AMAP_MODE_PATH = {
     TransportMode.TAXI: "driving",
     TransportMode.TRANSIT: "transit/integrated",
     TransportMode.SUBWAY: "transit/integrated",
+    # AMap's integrated transit routing already mixes walking + transit legs,
+    # which is the closest real-world match for our MIXED mode.
+    TransportMode.MIXED: "transit/integrated",
 }
 
 

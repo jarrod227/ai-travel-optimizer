@@ -30,6 +30,7 @@ from typing import Optional
 from clustering import Cluster, assign_clusters_to_days, cluster_places_by_travel_time
 from extract_places import extract_places_from_text, merge_duplicate_places, normalize_place_name
 from models import (
+    NEAR_CLOSING_NOTE,
     DayPlan,
     ItineraryStop,
     MovedPlace,
@@ -112,6 +113,11 @@ def build_trip_request_from_text(raw_text: str, **overrides) -> TripRequest:
 
     trip = TripRequest(**overrides)
     for place in extract_places_from_text(raw_text):
+        if place.category == PlaceCategory.HOTEL:
+            # A hotel line is the day anchor, not a sight to schedule.
+            if trip.hotel is None:
+                trip.hotel = place.name
+            continue
         if place.category in (PlaceCategory.RESTAURANT, PlaceCategory.CAFE):
             trip.candidate_restaurants.append(place)
         else:
@@ -511,9 +517,13 @@ def build_day_route(
 
     current_time = trip_request.daily_start_time
     current_coords = start_coords
+    # Travel minutes spent repositioning outside a recorded stop (see the
+    # look-ahead "jump" below); folded into the next stop's travel figure so
+    # total_travel_minutes stays honest.
+    pending_travel_minutes = 0
 
     def try_insert_meal(window_start: dt.time, hard_cutoff: dt.time, label: str) -> bool:
-        nonlocal current_time, current_coords, lunch_done, dinner_done
+        nonlocal current_time, current_coords, lunch_done, dinner_done, pending_travel_minutes
         if _time_to_minutes(current_time) < _time_to_minutes(window_start):
             return False
         if _time_to_minutes(current_time) > _time_to_minutes(hard_cutoff):
@@ -530,12 +540,14 @@ def build_day_route(
             if closing is not None:
                 slack = _time_to_minutes(closing) - (_time_to_minutes(arrival) + dining_minutes)
                 if slack < 30:
-                    near_closing = "arrival is close to closing time"
+                    near_closing = NEAR_CLOSING_NOTE
             departure = _add_minutes(arrival, dining_minutes)
             stops.append(
-                ItineraryStop(candidate, arrival, departure, round(travel_est.duration_minutes), mode,
+                ItineraryStop(candidate, arrival, departure,
+                              round(travel_est.duration_minutes) + pending_travel_minutes, mode,
                               is_meal=True, note=near_closing)
             )
+            pending_travel_minutes = 0
             current_time, current_coords = departure, (candidate.lat, candidate.lng)
             meal_pool.remove(candidate)
             if label == "lunch":
@@ -566,6 +578,7 @@ def build_day_route(
             # (as if we walked straight there) and look for a meal nearby
             # before actually starting the visit.
             current_time, current_coords = arrival_at_place, (place.lat, place.lng)
+            pending_travel_minutes += round(lookahead_travel)
             if lunch_would_be_skipped and not lunch_done:
                 try_insert_meal(LUNCH_EARLIEST_FORCED, LUNCH_HARD_CUTOFF, "lunch")
             if dinner_would_be_skipped and not dinner_done:
@@ -590,12 +603,21 @@ def build_day_route(
 
         duration = place.expected_duration_minutes or 60
         departure = _add_minutes(arrival, duration)
-        stops.append(ItineraryStop(place, arrival, departure, round(travel_est.duration_minutes), mode))
+        stops.append(ItineraryStop(place, arrival, departure,
+                                   round(travel_est.duration_minutes) + pending_travel_minutes, mode))
+        pending_travel_minutes = 0
         current_time, current_coords = departure, (place.lat, place.lng)
 
+    # Attractions are done. If a meal window hasn't opened yet, idle (free
+    # time) until it does rather than declaring the meal infeasible - only
+    # worth doing when there are actual candidates left to try.
     if not lunch_done:
+        if meal_pool and _time_to_minutes(current_time) < _time_to_minutes(LUNCH_WINDOW[0]):
+            current_time = LUNCH_WINDOW[0]
         try_insert_meal(LUNCH_WINDOW[0], LUNCH_HARD_CUTOFF, "lunch")
     if not dinner_done:
+        if meal_pool and _time_to_minutes(current_time) < _time_to_minutes(DINNER_WINDOW[0]):
+            current_time = DINNER_WINDOW[0]
         try_insert_meal(DINNER_WINDOW[0], DINNER_HARD_CUTOFF, "dinner")
 
     return_travel = provider.travel_time(current_coords, end_coords, mode, city).duration_minutes if stops else 0.0
