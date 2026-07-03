@@ -2,7 +2,8 @@
 
 ``MockProvider`` implements the same interfaces as ``AMapProvider`` (see
 providers.py) but never touches the network. It ships a small built-in
-dataset of real Beijing coordinates so clustering/planning logic can be
+dataset of real Beijing coordinates (plus a Tokyo set for exercising the
+international / non-China flow) so clustering/planning logic can be
 exercised end-to-end without an API key.
 
 Travel times are derived from haversine distance with mode-specific average
@@ -114,6 +115,54 @@ _PLACES: list[_MockRecord] = [
         "慕田峪长城 Mutianyu Great Wall", ("慕田峪长城", "mutianyu", "mutianyu great wall"),
         40.4319, 116.5704, "怀柔区渤海镇", 4.7, 60000, 100.0,
         _hours(7, 30, 17, 0, last_entry_offset=60),
+    ),
+    # ---- Tokyo (international flow demo/tests; coordinates fall outside the
+    # mainland-China bounding box so CompositeMapProvider-style routing and
+    # the rest of the pipeline can be exercised offline for a non-China trip)
+    _MockRecord(
+        "浅草寺 Senso-ji", ("浅草寺", "senso-ji", "sensoji", "asakusa temple"),
+        35.7148, 139.7967, "东京都台东区浅草2-3-1", 4.7, 140000, 0.0,
+        _hours(6, 0, 17, 0, last_entry_offset=30),
+    ),
+    _MockRecord(
+        "明治神宫 Meiji Shrine", ("明治神宫", "meiji shrine", "meiji jingu"),
+        35.6764, 139.6993, "东京都涩谷区代代木神园町1-1", 4.6, 75000, 0.0,
+        _hours(5, 0, 18, 0, last_entry_offset=30),
+    ),
+    _MockRecord(
+        "东京塔 Tokyo Tower", ("东京塔", "tokyo tower"),
+        35.6586, 139.7454, "东京都港区芝公园4-2-8", 4.5, 90000, 180.0,
+        _hours(9, 0, 22, 30, last_entry_offset=60),
+    ),
+    _MockRecord(
+        "涩谷十字路口 Shibuya Crossing", ("涩谷十字路口", "涩谷", "shibuya crossing", "shibuya"),
+        35.6595, 139.7005, "东京都涩谷区道玄坂", 4.4, 50000, 0.0,
+        _hours(0, 0, 23, 59),
+    ),
+    _MockRecord(
+        "teamLab Planets", ("teamlab planets", "teamlab", "丰洲teamlab"),
+        35.6494, 139.7898, "东京都江东区丰洲6-1-16", 4.6, 40000, 230.0,
+        _hours(9, 0, 20, 0, last_entry_offset=60),
+    ),
+    _MockRecord(
+        "新宿御苑 Shinjuku Gyoen", ("新宿御苑", "shinjuku gyoen"),
+        35.6852, 139.7100, "东京都新宿区内藤町11", 4.6, 60000, 25.0,
+        _hours(9, 0, 17, 30, closed_weekday=0, last_entry_offset=60),
+    ),
+    _MockRecord(
+        "一兰拉面(涩谷店) Ichiran Shibuya", ("一兰拉面", "ichiran", "ichiran shibuya"),
+        35.6590, 139.7010, "东京都涩谷区神南1-22-7", 4.3, 30000, 60.0,
+        _hours(0, 0, 23, 59),
+    ),
+    _MockRecord(
+        "筑地场外市场 Tsukiji Outer Market", ("筑地场外市场", "筑地市场", "tsukiji outer market", "tsukiji"),
+        35.6654, 139.7707, "东京都中央区筑地4丁目", 4.4, 55000, 100.0,
+        _hours(5, 0, 14, 0, last_entry_offset=0),
+    ),
+    _MockRecord(
+        "新宿酒店 Shinjuku Hotel", ("新宿酒店", "shinjuku hotel", "hotel shinjuku"),
+        35.6896, 139.7006, "东京都新宿区西新宿", None, None, None,
+        _hours(0, 0, 23, 59),
     ),
 ]
 

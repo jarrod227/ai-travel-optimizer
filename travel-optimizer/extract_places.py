@@ -45,13 +45,14 @@ CATEGORY_KEYWORDS: dict[PlaceCategory, list[str]] = {
     PlaceCategory.LANDMARK: ["故宫", "landmark", "地标", "广场", "square"],
 }
 
-# A small alias table for well-known Beijing landmarks so common
-# Chinese/English name pairs (as they appear mixed together in Xiaohongshu
-# copy) are recognized as duplicates even though the strings themselves
-# share no characters. Extend this table as new markets/cities are added;
-# for the long tail, duplicate POIs are instead caught later by comparing
-# geocoded coordinates (see merge_duplicate_places).
+# A small alias table for well-known landmarks so common Chinese/English
+# name pairs (as they appear mixed together in Xiaohongshu copy) are
+# recognized as duplicates even though the strings themselves share no
+# characters. Currently covers Beijing plus a few Tokyo examples - extend
+# per city as new markets are added; for the long tail, an agent driving
+# this skill should merge bilingual pairs itself during classification.
 _ALIAS_GROUPS: list[set[str]] = [
+    # Beijing
     {"故宫", "故宫博物院", "forbiddencity", "theforbiddencity"},
     {"天坛", "天坛公园", "templeofheaven"},
     {"颐和园", "summerpalace"},
@@ -62,11 +63,40 @@ _ALIAS_GROUPS: list[set[str]] = [
     {"景山公园", "jingshanpark"},
     {"天安门", "天安门广场", "tiananmensquare", "tiananmen"},
     {"798艺术区", "798artdistrict", "798"},
+    # Tokyo
+    {"浅草寺", "sensoji", "asakusatemple"},
+    {"明治神宫", "meijishrine", "meijijingu"},
+    {"东京塔", "tokyotower"},
+    {"涩谷十字路口", "涩谷", "shibuyacrossing", "shibuya"},
+    {"新宿御苑", "shinjukugyoen"},
+    {"筑地场外市场", "筑地市场", "tsukijioutermarket", "tsukiji"},
+    {"一兰拉面", "ichiran"},
 ]
 
 
+def _alias_key_hits(key: str) -> set[int]:
+    """Indices of alias groups this normalized key belongs to. Besides exact
+    membership, a key also hits a group when it contains (or is contained
+    by) a member - so "sensojitemple" still matches the "sensoji" group.
+    Substring hits require the shorter string to be reasonably long (3+
+    chars for CJK members, 4+ otherwise) to avoid accidental matches."""
+
+    hits: set[int] = set()
+    for i, group in enumerate(_ALIAS_GROUPS):
+        for member in group:
+            if key == member:
+                hits.add(i)
+                break
+            shorter = min(member, key, key=len)
+            min_len = 3 if _looks_cjk(shorter) else 4
+            if len(shorter) >= min_len and (member in key or key in member):
+                hits.add(i)
+                break
+    return hits
+
+
 def _alias_match(key_a: str, key_b: str) -> bool:
-    return any(key_a in group and key_b in group for group in _ALIAS_GROUPS)
+    return bool(_alias_key_hits(key_a) & _alias_key_hits(key_b))
 
 
 BULLET_PREFIX_RE = re.compile(r"^[\s\-\*•‣◦⁃∙#\d\.\)．）]+")

@@ -396,6 +396,44 @@ def test_must_visit_first_anchors_must_visit_early():
 
 
 # --------------------------------------------------------------------------
+# International (non-China) trip works end to end offline
+# --------------------------------------------------------------------------
+
+def test_international_tokyo_trip_end_to_end():
+    from planner import plan_trip
+
+    raw = "浅草寺\nSenso-ji Temple\n东京塔\nTokyo Tower\n一兰拉面 - must try"
+    places = extract_places_from_text(raw)
+    # Bilingual duplicates with no shared characters merge via the alias
+    # table, including suffixed variants like "Senso-ji Temple" vs "sensoji".
+    assert len(places) == 3
+
+    trip = TripRequest(destination="Tokyo", start_date=dt.date(2026, 11, 3),  # Tuesday
+                        number_of_days=1, hotel="新宿酒店", transport_mode=TransportMode.MIXED)
+    sensoji = next(p for p in places if p.name_cn == "浅草寺")
+    tower = next(p for p in places if p.name_cn == "东京塔")
+    ramen = next(p for p in places if p.name_cn == "一兰拉面")
+    sensoji.priority, sensoji.category = PriorityLevel.MUST_VISIT, PlaceCategory.TEMPLE
+    tower.priority, tower.category = PriorityLevel.HIGH_PRIORITY, PlaceCategory.OBSERVATION_DECK
+    ramen.priority, ramen.category = PriorityLevel.MUST_EAT, PlaceCategory.RESTAURANT
+    trip.must_visit_places = [sensoji]
+    trip.high_priority_places = [tower]
+    trip.must_eat_places = [ramen]
+
+    result = plan_trip(trip, provider=MockProvider())
+
+    scheduled = {s.place.name for plan in result.plans for d in plan.days for s in d.stops}
+    assert any("浅草寺" in name for name in scheduled)
+    assert any(s.is_meal for d in result.plans[0].days for s in d.stops)
+    # Tokyo coordinates are well outside the mainland-China bounding box, so
+    # every geocoded stop proves the pipeline is location-agnostic.
+    for plan in result.plans:
+        for day in plan.days:
+            for stop in day.stops:
+                assert stop.place.lng > 136.0
+
+
+# --------------------------------------------------------------------------
 # 10. relaxed plan has more buffer than balanced plan
 # --------------------------------------------------------------------------
 
