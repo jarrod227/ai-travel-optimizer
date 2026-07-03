@@ -55,6 +55,7 @@ class PriorityLevel(StrEnum):
 
 class RatingSource(StrEnum):
     AMAP = "amap"
+    GOOGLE = "google"
     DIANPING = "dianping"
     MEITUAN = "meituan"
     USER = "user"

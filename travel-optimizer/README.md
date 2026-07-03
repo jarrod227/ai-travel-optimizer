@@ -23,13 +23,14 @@ itineraries that are honest about what doesn't fit and why.
 |---|---|
 | `models.py` | Core dataclasses: `Place`, `TripRequest`, `DayPlan`, `Plan`, `PlanningResult`, etc. No I/O. |
 | `extract_places.py` | Free-text -> `Place` list. Note/tag detection, name normalization, CN/EN duplicate merging. |
-| `providers.py` | `MapProvider` / `POIDataProvider` / `ReviewDataProvider` interfaces + `AMapProvider` (real, China-first) + placeholder adapters (`GoogleMapsProvider`, `MapboxProvider`, `DianpingReviewProvider`, `MeituanReviewProvider`) + a shared `Cache`. |
+| `providers.py` | `MapProvider` / `POIDataProvider` / `ReviewDataProvider` interfaces + `AMapProvider` (China) + `GoogleMapsProvider` (everywhere else) + `CompositeMapProvider`/`build_default_provider` (auto AMap-vs-Google routing with fallback) + a `MapboxProvider` placeholder + a shared `Cache`. |
 | `mock_maps.py` | `MockProvider` - fully offline, deterministic stand-in for tests/dev. |
 | `clustering.py` | Travel-time-aware geographic clustering, cluster-to-day assignment. |
 | `planner.py` | Orchestration: enrichment, duration estimation, feasibility rules, day-route building, meal insertion, the three plan styles. |
 | `scoring.py` | Transparent weighted scoring (maximize coverage/coherence/feasibility, penalize backtracking/rushed meals/overpacking/etc). |
 | `map_export.py` | `PlanningResult` -> GeoJSON / a self-contained Leaflet HTML preview. Kept separate from planning logic. |
-| `test_planner.py` | pytest suite, runs fully offline against `MockProvider`. |
+| `test_planner.py` | pytest suite for the planning pipeline, runs fully offline against `MockProvider`. |
+| `test_providers.py` | pytest suite for provider auto-selection/fallback, runs offline against stub providers. |
 | `examples/` | A worked raw-input -> normalized-request -> formatted-itinerary example. |
 
 ## Quick start
@@ -81,7 +82,7 @@ pipeline end to end (output captured in `examples/sample_output.md`).
 The planner only ever talks to the `MapProvider` / `POIDataProvider` /
 `ReviewDataProvider` interfaces in `providers.py` - never to a vendor SDK
 directly. That's what makes `MockProvider` a drop-in replacement for tests
-and `AMapProvider` swappable for a future `GoogleMapsProvider`/`MapboxProvider`
+and `AMapProvider`/`GoogleMapsProvider` swappable for a future `MapboxProvider`
 without touching `clustering.py`, `planner.py`, or `scoring.py`.
 
 - **`AMapProvider`** (`providers.py`) - preferred for China trips. Needs the
@@ -90,19 +91,48 @@ without touching `clustering.py`, `planner.py`, or `scoring.py`.
   geocoding, POI search, routing (walking/driving/transit), and weather.
   Every network call is wrapped in `Cache` so a planning session never
   requests the same `(place, mode)` pair twice.
+- **`GoogleMapsProvider`** (`providers.py`) - preferred for everywhere else.
+  Needs the `GOOGLE_MAPS_API_KEY` environment variable. Uses the Geocoding,
+  Places Text Search, Directions, and Distance Matrix REST APIs (same
+  `urllib` + `Cache` approach as AMap; Distance Matrix gives it a real
+  batch route lookup, not just the pairwise fallback). Google's Places API
+  reports a 0-4 `price_level`, not a currency amount, so `avg_cost_rmb` is
+  intentionally left unset rather than mapped to a fake RMB figure. Google
+  Maps Platform has no bundled weather API, so `weather()` returns `None`.
+- **`CompositeMapProvider` + `providers.build_default_provider()`** - auto
+  selection. `build_default_provider()` builds whichever of AMap/Google
+  Maps have an API key configured and wraps them so China destinations
+  prefer AMap and everything else prefers Google Maps, with automatic
+  fallback to the other provider if the preferred one is unavailable or
+  returns nothing. Geocoding/POI search decide from the `city` string
+  (`providers.looks_like_china`); `travel_time` decides from the actual
+  coordinates (a mainland-China bounding box), which is more reliable once
+  coordinates are known. Raises `ProviderConfigError` if neither key is
+  set - callers that want a safe offline default should catch that and
+  fall back to `mock_maps.MockProvider()`.
 - **`MockProvider`** (`mock_maps.py`) - fully offline. Ships a small,
   real-coordinate Beijing dataset (Forbidden City, Jingshan/Beihai/Temple
   of Heaven, Summer Palace, 798, a few restaurants, and Mutianyu Great Wall
   as a genuine ~70km outlier) so clustering/feasibility logic can be
   exercised end to end without a key.
-- **`GoogleMapsProvider` / `MapboxProvider`** - unimplemented placeholders
-  documenting the same interface for a future non-China rollout.
+- **`MapboxProvider`** - an unimplemented placeholder documenting the same
+  interface for a future third option.
 - **`DianpingReviewProvider` / `MeituanReviewProvider`** - unimplemented
   placeholders. **This package does not scrape Meituan/Dianping.** A real
   implementation would need an official partner API; until then, ratings
-  come from AMap, a user-provided score, or a neutral mock default with the
-  source explicitly recorded (`RatingSource`: `amap` / `dianping` /
-  `meituan` / `user` / `mock` / `unknown`).
+  come from AMap, Google, a user-provided score, or a neutral mock default
+  with the source explicitly recorded (`RatingSource`: `amap` / `google` /
+  `dianping` / `meituan` / `user` / `mock` / `unknown`).
+
+```python
+from providers import build_default_provider, ProviderConfigError
+from mock_maps import MockProvider
+
+try:
+    provider = build_default_provider()  # needs AMAP_API_KEY and/or GOOGLE_MAPS_API_KEY
+except ProviderConfigError:
+    provider = MockProvider()  # safe offline fallback
+```
 
 ## Rating policy
 
@@ -163,17 +193,24 @@ in the browser - it's a local dev convenience, not a production embed.
 
 ```bash
 pip install pytest
-pytest test_planner.py -v
+pytest -v
 ```
 
-All tests run against `MockProvider` - no network access or API key
-required. Covers: restaurant-closing-time math, overpacked-day trimming,
-two-day geographic clustering, moving a restaurant to a day where it
-actually fits (vs. rejecting it), must-visit places surviving budget
-trimming, optional places being explicitly dropped with a reason,
-must-eat infeasibility explanations, the neutral-rating default,
-Chinese/English duplicate-place merging, and relaxed plans carrying more
-schedule buffer than balanced ones.
+All tests run offline - no network access or API key required.
+
+- `test_planner.py` - restaurant-closing-time math, overpacked-day
+  trimming, two-day geographic clustering, moving a restaurant to a day
+  where it actually fits (vs. rejecting it), must-visit places surviving
+  budget trimming, optional places being explicitly dropped with a reason,
+  must-eat infeasibility explanations, the neutral-rating default,
+  Chinese/English duplicate-place merging, relaxed plans carrying more
+  schedule buffer than balanced ones, time-hint-tag scheduling, weather/
+  stretched-day reminders, backup-restaurant fallback, and plan-style
+  differentiation.
+- `test_providers.py` - `CompositeMapProvider` routing and fallback
+  (China-vs-not by city string and by coordinates, falling back when the
+  preferred provider errors or finds nothing) using small in-memory stub
+  providers, not real AMap/Google Maps calls.
 
 ## Known limitations / assumptions (V1)
 

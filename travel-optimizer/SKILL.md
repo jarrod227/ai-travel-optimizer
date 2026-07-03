@@ -62,11 +62,25 @@ re-implement the logic inline.
    must-visit/must-eat - that tier means "never drop this unless a hard
    constraint makes it impossible."
 
-3. **Pick a provider (providers.py / mock_maps.py).** Use `AMapProvider`
-   (needs `AMAP_API_KEY` env var) for real China planning. Use
-   `MockProvider` (mock_maps.py) when there's no key available, for a
-   quick draft, or for anything test-related - it's fully offline and
-   deterministic. Never hard-code an API key.
+3. **Pick a provider (providers.py / mock_maps.py).** This skill is not
+   China-only - it works for any destination, given a working map provider:
+   - For a China destination, use `AMapProvider` (needs `AMAP_API_KEY`).
+   - For anywhere else, use `GoogleMapsProvider` (needs `GOOGLE_MAPS_API_KEY`).
+   - If you don't want to reason about which one applies yourself (or the
+     trip spans both, e.g. Beijing + Tokyo), call
+     `providers.build_default_provider()` - it builds whichever provider(s)
+     have a key configured and auto-routes each call to AMap for China
+     places and Google Maps for everything else, falling back to the other
+     one if the preferred one is unavailable or comes up empty.
+   - Use `MockProvider` (mock_maps.py) when there's no key available, for a
+     quick draft, or for anything test-related - it's fully offline and
+     deterministic, but its built-in dataset only covers a handful of
+     Beijing POIs (everything else geocodes to nothing).
+   Never hard-code an API key.
+   The extraction/classification/clustering/scoring stages are already
+   language- and location-agnostic - Xiaohongshu screenshots in Chinese,
+   English, or mixed both work the same way through `extract_places.py`;
+   only the map provider needs to match the destination.
 
 4. **Run the planner.** Call `planner.plan_trip(trip_request, provider=...)`.
    This one call does geocoding/enrichment, duration estimation,
@@ -163,5 +177,14 @@ stretched days caused by forced cluster merges - relay all of them.
 - Without an explicit `start_date`, weekday-based closures (e.g. "closed
   Mondays") can't be checked precisely - ask for dates if that matters.
 - `MockProvider`'s dataset only covers a handful of well-known Beijing POIs;
-  for anything else (or a different city) use `AMapProvider` with a real
-  key, or expect `metadata_confidence` to come back low.
+  for anything else (or a different city/country) use a real provider
+  (`AMapProvider`, `GoogleMapsProvider`, or `build_default_provider()`),
+  or expect `metadata_confidence` to come back low.
+- `extract_places.py`'s CN/EN duplicate-merging alias table
+  (`_ALIAS_GROUPS`) only lists well-known Beijing landmarks. For other
+  cities, a bilingual pair with no shared characters (e.g. "浅草寺" /
+  "Senso-ji") won't auto-merge - coordinates only ever narrow an
+  already-name-similar match, they don't trigger a merge on their own. If
+  you're classifying places for a non-Beijing trip, watch for this and
+  merge such pairs yourself (or extend `_ALIAS_GROUPS`) before building the
+  `TripRequest`.
